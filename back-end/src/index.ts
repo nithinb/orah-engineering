@@ -18,7 +18,7 @@ createConnection()
     Routes.forEach((route) => {
       ;(app as any)[route.method](route.route, (req: Request, res: Response, next: Function) => {
         const result = new (route.controller as any)()[route.action](req, res, next)
-        console.log("RESULT: ", result)
+        console.log("FINAL RESULT: ", result)
         try {
           if (result instanceof Promise) {
             result.then((result) => (result !== null && result !== undefined ? res.send(result) : undefined))

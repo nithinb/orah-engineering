@@ -1,9 +1,12 @@
 import { getRepository } from "typeorm"
 import { NextFunction, Request, Response } from "express"
 
+import { CreateGroupInput, UpdateGroupInput, PostRunGroupInput } from "../interface/group.interface"
 import { Group } from "../entity/group.entity"
-import { CreateGroupInput, UpdateGroupInput } from "../interface/group.interface"
-
+import { insertIntoStudentGroupTable, deleteEntriesForOneGroupStudentTable, fetchStudentsInAGroup } from "../crossTableInteraction/student-group.interaction"
+import { runGroupFilter } from "../crossTableInteraction/student-roll-state.interaction"
+import { group } from "console"
+import { executeQuery } from "../utils/helper"
 export class GroupController {
   private groupRepository = getRepository(Group)
   async allGroups(request: Request, response: Response, next: NextFunction) {
@@ -23,7 +26,6 @@ export class GroupController {
       roll_states: params?.roll_states,
       incidents: params?.incidents,
       ltmt: params?.ltmt,
-      student_count: params?.student_count,
     }
 
     const groupObject = new Group()
@@ -35,7 +37,7 @@ export class GroupController {
     // Task 1:
     // Update a Group
     const { body: params } = request
-    this.groupRepository.findOne(params.id).then((groupObject) => {
+    const result = await this.groupRepository.findOne(params.id).then(async (groupObject) => {
       const updateGroupInput: UpdateGroupInput = {
         id: params.id,
         name: params?.name,
@@ -43,19 +45,19 @@ export class GroupController {
         roll_states: params?.roll_states,
         incidents: params?.incidents,
         ltmt: params?.ltmt,
-        student_count: params?.student_count,
       }
       groupObject.prepareToUpdate(updateGroupInput)
-      return this.groupRepository.save(groupObject)
+      return await this.groupRepository.save(groupObject)
     })
-    return await this.groupRepository.find(params.id)
+    return result
   }
 
   async removeGroup(request: Request, response: Response, next: NextFunction) {
     // Task 1:
     // Delete a Group
     const { body: params } = request
-    const rowToDelete = await this.groupRepository.findOne(params.id)
+    const groupId = params.id
+    const rowToDelete = await this.groupRepository.findOne(groupId)
     if (!rowToDelete) {
       return { ERROR: "NOT_FOUND" }
     }
@@ -66,27 +68,9 @@ export class GroupController {
     // Task 1:
     // Return the list of Students that are in a Group
     const { body: params } = request
-    const groupToRun = await this.groupRepository.findOne(params.id)
-    let query = `
-      SELECT student_id, COUNT(student_id), first_name, last_name
-      FROM 
-        student_roll_state
-        INNER JOIN 
-          student ON (student_roll_state.student_id = student.id)
-        INNER JOIN 
-          roll ON (student_roll_state.roll_id = roll.id)
-
-      WHERE
-        state='absent'
-        AND 
-        JULIANDAY(date()) - JULIANDAY(completed_at) > ${groupToRun.number_of_weeks}
-
-      GROUP BY
-        student_id
-      HAVING
-        COUNT(student_id) ${groupToRun.ltmt} ${groupToRun.incidents}
-      ;
-    `
+    const groupId = params.id
+    const queryResult = await fetchStudentsInAGroup(groupId)
+    return queryResult
   }
 
   async runGroupFilters(request: Request, response: Response, next: NextFunction) {
@@ -94,5 +78,45 @@ export class GroupController {
     // 1. Clear out the groups (delete all the students from the groups)
     // 2. For each group, query the student rolls to see which students match the filter for the group
     // 3. Add the list of students that match the filter to the group
+    const { body: params } = request
+    const groupId = params.id
+
+    // Delete out the group execution run from Group_Student
+    const deleteResult = await deleteEntriesForOneGroupStudentTable(groupId)
+
+    const groupToRun = await this.groupRepository.findOne(groupId)
+
+    const queryResult = await runGroupFilter(groupToRun)
+
+    for (let queryRow of queryResult) {
+      const insertResult = await insertIntoStudentGroupTable(groupToRun.id, queryRow.student_id, queryRow.incidentCount)
+    }
+
+    let groupObject = new Group()
+    const updateGroupInput: PostRunGroupInput = {
+      id: groupToRun.id,
+      name: groupToRun?.name,
+      number_of_weeks: groupToRun?.number_of_weeks,
+      roll_states: groupToRun?.roll_states,
+      incidents: groupToRun?.incidents,
+      ltmt: groupToRun?.ltmt,
+      student_count: queryResult.length,
+      run_at: new Date(),
+    }
+
+    groupObject.prepareToUpdatePostRunFilter(updateGroupInput)
+
+    let query = `
+      UPDATE
+        "group"
+      SET
+        run_at=date(),
+        student_count=${queryResult.length}
+      WHERE
+        id=${groupId}
+      ;
+    `
+    const result = await executeQuery(query, this.groupRepository)
+    return { SUCCESS: "true" }
   }
 }

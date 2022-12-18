@@ -24,17 +24,21 @@ INSERT INTO "roll" ("name", "completed_at") VALUES ("rollG", date("2022-12-16"))
 # Query to satisfy run the group row
 
 
-SELECT student_id, count(student_id)
+SELECT student_id, COUNT(student_id), first_name, last_name
 FROM 
 	student_roll_state
-INNER JOIN student ON (student_roll_state.student_id = student.id)
-
+	INNER JOIN 
+		student ON (student_roll_state.student_id = student.id)
+	INNER JOIN 
+		roll ON (student_roll_state.roll_id = roll.id)
 
 WHERE
-	state='late'
+	state='absent'
 	AND 
-	JULIANDAY(date()) - JULIANDAY(completed_at) > 0
+	JULIANDAY(date()) - JULIANDAY(completed_at) > 1
 
 GROUP BY
 	student_id
+HAVING
+	COUNT(student_id) > 0
 ;
