@@ -117,6 +117,6 @@ export class GroupController {
       ;
     `
     const result = await executeQuery(query, this.groupRepository)
-    return { SUCCESS: "true" }
+    return { TotalStudents: queryResult.length }
   }
 }
